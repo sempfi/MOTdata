@@ -277,7 +277,7 @@ def compute_label_stats(data, targets=None, indices=None, classnames=None,
         M (dict): Dictionary with sample means (Tensors) indexed by target class
         S (dict): Dictionary with sample covariances (Tensors) indexed by target class
     """
-    print("in MOMENTS: ", eigen_correction)
+    ## print("in MOMENTS: ", eigen_correction)
     device = process_device_arg(device)
     M = {} # Means
     S = {} # Covariances
