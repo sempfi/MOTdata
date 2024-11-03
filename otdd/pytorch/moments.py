@@ -250,13 +250,13 @@ def _single_label_stats(data, i, c, label_indices, M=None, S=None, batch_size=25
             return μ,Σ,n
 
 
-def compute_label_stats(data, targets=None,indices=None,classnames=None,
+def compute_label_stats(data, targets=None, indices=None, classnames=None,
                         online=True, batch_size=100, to_tensor=True,
                         eigen_correction=False,
                         eigen_correction_scale=1.0,
-                        nworkers=0, diagonal_cov = False,
+                        nworkers=0, diagonal_cov=False,
                         embedding=None,
-                        device=None, dtype = torch.FloatTensor):
+                        device=None, dtype=torch.FloatTensor):
     """
     Computes mean/covariance of examples grouped by label. Data can be passed as
     a pytorch dataset or a dataloader. Uses dataloader to avoid loading all
@@ -267,7 +267,7 @@ def compute_label_stats(data, targets=None,indices=None,classnames=None,
         targets (Tensor, optional): If provided, will use this target array to
             avoid re-extracting targets.
         indices (array-like, optional): If provided, filtering is based on these
-            indices (useful if e.g. dataloade`r has subsampler)
+            indices (useful if e.g. dataloader has subsampler)
         eigen_correction (bool, optional):  If ``True``, will shift the covariance
             matrix's diagonal by :attr:`eigen_correction_scale` to ensure PSD'ness.
         eigen_correction_scale (numeric, optional): Magnitude of eigenvalue
@@ -283,8 +283,6 @@ def compute_label_stats(data, targets=None,indices=None,classnames=None,
     S = {} # Covariances
 
     ## We need to get all targets in advance, in order to filter.
-    ## Here we assume targets is the full dataset targets (ignoring subsets, etc)
-    ## so we need to find effective targets.
     if targets is None:
         targets, classnames, indices = extract_data_targets(data)
     else:
@@ -295,57 +293,55 @@ def compute_label_stats(data, targets=None,indices=None,classnames=None,
     effective_targets = targets[indices]
 
     if nworkers > 1:
-        import torch.multiprocessing as mp # Ugly, sure. But useful.
-        mp.set_start_method('spawn',force=True)
-        M = mp.Manager().dict() # Alternatively, M = {}; M.share_memory
+        import torch.multiprocessing as mp
+        mp.set_start_method('spawn', force=True)
+        M = mp.Manager().dict()
         S = mp.Manager().dict()
         processes = []
-        for i,c in enumerate(classnames): # No. of processes
-            label_indices = indices[effective_targets == i]
+        for i, c in enumerate(classnames):
+            label_indices = indices[effective_targets == c]
             p = mp.Process(target=_single_label_stats,
-                           args=(data, i,c,label_indices,M,S),
-                           kwargs={'device': device, 'online':online})
+                           args=(data, i, c, label_indices, M, S),
+                           kwargs={'device': device, 'online': online})
             p.start()
             processes.append(p)
         for p in processes: p.join()
     else:
-        for i,c in enumerate(classnames):
-            label_indices = indices[effective_targets == i]
-            μ,Σ,n = _single_label_stats(data, i,c,label_indices, device=device,
-                                        dtype=dtype, embedding=embedding,
-                                        online=online, diagonal_cov=diagonal_cov)
-            M[i],S[i] = μ, Σ
+        for i, c in enumerate(classnames):
+            label_indices = indices[effective_targets == c]
+            μ, Σ, n = _single_label_stats(data, i, c, label_indices, device=device,
+                                          dtype=dtype, embedding=embedding,
+                                          online=online, diagonal_cov=diagonal_cov)
+            M[c], S[c] = μ, Σ
 
     if to_tensor:
-        ## Warning: this assumes classes are *exactly* {0,...,n}, might break things
-        ## downstream if data is missing some classes
-        M = torch.stack([μ.to(device) for i,μ in sorted(M.items()) if μ is not None], dim=0)
-        S = torch.stack([Σ.to(device) for i,Σ in sorted(S.items()) if Σ is not None], dim=0)
+        ## Warning: this no longer assumes classes are exactly {0, ..., n}
+        M = torch.stack([μ.to(device) for c, μ in sorted(M.items()) if μ is not None], dim=0)
+        S = torch.stack([Σ.to(device) for c, Σ in sorted(S.items()) if Σ is not None], dim=0)
 
     ### Shift the Covariance matrix's diagonal to ensure PSD'ness
-    # 这里做奇异值修正，保证协方差矩阵S是positive semi-definiteness (PSD)，即协方差矩阵的所有奇异值都是非负的。
+
     if eigen_correction:
         logger.warning('Applying eigenvalue correction to Covariance Matrix')
         λ = eigen_correction_scale
         for i in range(S.shape[0]):
             if eigen_correction == 'constant':
-                S[i] += torch.diag(λ*torch.ones(S.shape[1], device = device))
+                S[i] += torch.diag(λ * torch.ones(S.shape[1], device=device))
             elif eigen_correction == 'jitter':
-                S[i] += torch.diag(λ*torch.ones(S.shape[1], device=device).uniform_(0.99, 1.01))
+                S[i] += torch.diag(λ * torch.ones(S.shape[1], device=device).uniform_(0.99, 1.01))
             elif eigen_correction == 'exact':
-                s,v = torch.symeig(S[i])
+                s, v = torch.symeig(S[i])
                 print(s.min())
-                s,v = torch.lobpcg(S[i], largest=False)
+                s, v = torch.lobpcg(S[i], largest=False)
                 print(s.min())
                 s = torch.eig(S[i], eigenvectors=False).eigenvalues
                 print(s.min())
                 pdb.set_trace()
                 s_min = s.min()
                 if s_min <= 1e-10:
-                    S[i] += torch.diag(λ*torch.abs(s_min)*torch.ones(S.shape[1], device=device))
+                    S[i] += torch.diag(λ * torch.abs(s_min) * torch.ones(S.shape[1], device=device))
                 raise NotImplemented()
-    return M,S
-
+    return M, S
 
 def dimreduce_means_covs(Means, Covs, redtype='diagonal'):
     """ Methods to reduce the dimensionality of the Feature-Mean/Covariance
